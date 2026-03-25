@@ -1,0 +1,201 @@
+---
+title: "Sunrise and sunset in Vietnam"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE, eval = FALSE}
+# The code that adds the .nojekyll file to the GitHub repository:
+file <- ".nojekyll"
+file.create(file)
+gert::git_add(file)
+gert::git_commit("Adding the .nojekyll file")
+gert::git_push()
+rm(file)
+```
+
+```{r include = FALSE, eval = FALSE}
+run_all <- function() {
+  knitr::purl("index.qmd", "tmp.R", documentation = FALSE)
+  source("tmp.R")
+  file.remove("tmp.R")  
+}
+
+rerun_all <- function() {
+  rm(list  = grep("run_all", ls(envir = .GlobalEnv), value = TRUE, invert = TRUE),
+     envir = .GlobalEnv)
+  run_all()
+}
+```
+
+```{r include = FALSE, purl = FALSE}
+setHook("plot.new", NULL, action = "replace")
+
+par2 <- function(...) par(..., mgp = c(1.5, .5, 0), bty = "n")
+
+knitr::knit_hooks$set(
+  margin = function(before, options, envir) {
+    if (before) par2(plt = c(.105, .97, .15, .95)) else NULL
+  })
+
+figw <- 7  # default is 7 and maximum possible is 8.3
+figh <- 5  # default is 5
+eps <- 1
+
+knitr::opts_chunk$set(margin     = TRUE,
+                      fig.retina = 2,
+                      fig.align  = "center",
+                      fig.width  = eps * figw,
+                      fig.height = eps * figh) 
+```
+
+
+Whereas the durations of day and night as a function of time follow a sinusoid
+function, this is not the case for the timing of the sunrise and sunset because of the
+facts (i) that the orbit of the earth around the sun is an ellipse and not a circle and
+(ii) the rotation axis of the earth is tilted on the orbital plan. Here we illustrate
+all this in a given location.
+
+```{r message = FALSE}
+library(hms)
+library(dplyr)
+library(suncalc)
+library(lubridate)
+library(purrr)
+library(sf)
+```
+
+Computing the sunrise and sunset times for Saigon for 2023 and 2024:
+
+```{r}
+timings <- seq.Date(ymd(20230101), ymd(20241231), 1) |> 
+  getSunlightTimes(lat = 10.802506629026347, lon = 106.73305962858632) |> # Saigon
+  select(date, sunrise, sunset) |>  
+  mutate(across(-date, ~ .x + 7 * 60 * 60)) |>  # UTC to ICT transformation
+  mutate(across(-date, as_hms)) |> 
+  mutate(day_duration = sunset - sunrise)
+```
+
+Looking at timings of earliest and latest sunrises and sunsets:
+
+```{r}
+timings |> 
+  arrange(sunrise) |> 
+  head()
+
+timings |> 
+  arrange(desc(sunrise)) |> 
+  head()
+
+timings |> 
+  arrange(sunset) |> 
+  head()
+
+timings |> 
+  arrange(desc(sunset)) |> 
+  head()
+```
+
+A tuning of the `plot()` function:
+
+```{r}
+plot2 <- function(...) plot(..., type = "l", lwd = 2)
+```
+
+The duration of the day as a function of time:
+
+```{r}
+with(timings, plot2(date, day_duration / 60 / 60, col = 2, xlab = "",
+                    ylab = "day duration (hours)"))
+abline(v = ymd(20240101))
+```
+
+Timing of sunrise and sunset as a function time:
+
+```{r}
+with(timings, {
+  plot2(date, sunrise / 60 / 60, col = 2, ylim = c(5, 19),
+        ylab = "time of daylight")
+  lines(date, sunset / 60 / 60, col = 4, lwd = 2)
+})
+abline(v = ymd(20240101))
+```
+
+An alternative to the previous plot:
+
+```{r}
+opar <- par(mfrow = c(2, 1), plt = c(.1, .99, .12, 1))
+
+with(timings, plot2(date, sunrise / 60 / 60, col = 2, xlab = "",
+                    ylab = "time of sunrise", yaxt = "n"))
+ats <- paste(rep(c("05", "06"), each = 6),
+             rep(sprintf("%02d", 10 * 0:5), 2), sep = ":")[4:8]
+axis(2, at = time_length(hm(ats), "hours"), ats)
+abline(v = ymd(20240101))
+
+with(timings, plot2(date, sunset / 60 / 60, col = 4, xlab = "",
+                    ylab = "time of sunset", yaxt = "n"))
+ats <- paste(rep(c("17", "18"), each = 6),
+             rep(sprintf("%02d", 10 * 0:5), 2), sep = ":")[4:9]
+axis(2, at = time_length(hm(ats), "hours"), ats)
+abline(v = ymd(20240101))
+
+par(opar)
+```
+
+A function that calculates the timings of sunrise and sunset as a function of time (in
+2023 and 2024) for a given location in the ICT time zone:
+
+```{r}
+calculate_timings <- function(lat = 10.802506629026347, lon = 106.73305962858632) {
+  seq.Date(ymd(20230101), ymd(20241231), 1) |> 
+    getSunlightTimes(lat = lat, lon = lon) |>
+    select(date, sunrise, sunset) |>  
+    mutate(across(-date, ~ .x + 7 * 60 * 60)) |> 
+    mutate(across(-date, as_hms)) |> 
+    mutate(day_duration = sunset - sunrise)
+}
+```
+
+Computing the longitudes and latitudes of the barycenters of the provinces of Vietnam:
+
+```{r}
+gadm1 <- readRDS("~/Desktop/gadm36_VNM_1_sf.rds")
+st_crs(gadm1) <- st_crs(gadm1)
+
+timings_list <- gadm1 |>
+  mutate(centroid  = geometry |> st_centroid() |> st_coordinates(),
+         latitude  = centroid[, "Y"],
+         longitude = centroid[, "X"]) |> 
+  st_drop_geometry() |> 
+  select(latitude, longitude) |> 
+  with(map2(latitude, longitude, calculate_timings))
+```
+
+Plotting the timing of sunrise and sunset as a function of time for the 63 provinces of
+Vietnam:
+
+```{r}
+opar <- par(mfrow = c(2, 1), plt = c(.1, .99, .12, 1))
+
+with(timings, plot(date, sunrise / 60 / 60, type = "n", xlab = "",
+                   ylab = "time of sunrise", yaxt = "n", ylim = c(5, 7)))
+ats <- paste(rep(c("05", "06"), each = 3),
+             rep(sprintf("%02d", seq(0, 40, 20)), 2), sep = ":")
+axis(2, at = time_length(hm(ats), "hours"), ats)
+abline(v = ymd(20240101))
+walk(timings_list, ~ with(.x, lines(date, sunrise / 60 / 60, col = 2)))
+
+with(timings, plot(date, sunset / 60 / 60, type = "n", xlab = "",
+                   ylab = "time of sunset", yaxt = "n", ylim = c(17, 19)))
+ats <- paste(rep(c("17", "18"), each = 3),
+             rep(sprintf("%02d", seq(0, 40, 20)), 2), sep = ":")
+axis(2, at = time_length(hm(ats), "hours"), ats)
+abline(v = ymd(20240101))
+walk(timings_list, ~ with(.x, lines(date, sunset / 60 / 60, col = 4)))
+
+par(opar)
+```
+
